@@ -1,5 +1,12 @@
 # Wave Radar
 
+This repo holds two independent Streamlit apps: **Wave Radar** (below) and
+**[Read Between Lines](read_between_lines/README.md)** — an AI reading
+companion for 10-Ks, 10-Qs, and classic shareholder letters (starting with
+Amazon/Bezos). Each has its own dependencies, database, and start scripts.
+
+---
+
 **Live app: https://ai-infra-watch.streamlit.app** (deployed from this repo
 via Streamlit Community Cloud — redeploys automatically on every push to
 `main`).
@@ -28,7 +35,7 @@ can text or email you (when running locally).
 Note on the hosted version: Streamlit Community Cloud containers have an
 ephemeral filesystem, so watchlist edits, settings, and signal history reset
 whenever the app restarts or redeploys. The "background checking" toggle in
-the Alerts tab is a local-laptop feature (it uses cron / Task Scheduler) and
+the Settings tab is a local-laptop feature (it uses cron / Task Scheduler) and
 won't do anything in the cloud. For alerts and persistent history, run it
 locally as described below.
 
@@ -68,7 +75,7 @@ To stop it: close the terminal/command window that opened alongside it.
 
 ## 3. Using it
 
-Seven tabs, left to right:
+Eight tabs, left to right:
 
 - **Idea Radar** — the headline. Ranked ideas with the full "why" behind
   each score, plus Reddit-hot names outside the universe.
@@ -81,15 +88,19 @@ Seven tabs, left to right:
 - **Watchlist** — add or remove tickers directly in the table. No code,
   just type a symbol and hit save. Un-check "Active" to pause a name
   without deleting it.
-- **Alerts** — set up email/text notifications and turn on background
-  checking (see below).
+- **Settings** — everything configurable lives here: signal-rule
+  thresholds, email/text alerts, and the background-checking toggle
+  (see below).
 - **History** — a running log of everything the dashboard (and the
   background checker) have found, over time. This is what eventually lets
   you judge whether the rules are actually any good.
+- **About** — live links (hosted app, GitHub repo, data sources), where
+  your data actually lives on disk, refresh cadence, and this same README
+  rendered in-app.
 
 ## 4. Getting alerts on your phone or email
 
-Open the **Alerts** tab.
+Open the **Settings** tab.
 
 **Email:** if you use Gmail, you'll need an
 [app password](https://myaccount.google.com/apppasswords) (a 16-character
@@ -99,7 +110,7 @@ your Gmail address, and the app password.
 
 **Text messages, for free:** every carrier has a hidden email address that
 turns into a text. Use the "Turn a phone number into a text address" box in
-the Alerts tab and it builds this for you automatically. Under the hood:
+the Settings tab and it builds this for you automatically. Under the hood:
 
 | Carrier  | Gateway                        |
 |----------|----------------------------------|
@@ -114,7 +125,7 @@ relying on it.
 ## 5. Background checking (the "behind the scenes" part)
 
 By default, the dashboard only checks the market while it's open in your
-browser. Flip on **"Turn on background checking"** in the Alerts tab, and
+browser. Flip on **"Turn on background checking"** in the Settings tab, and
 your laptop's own scheduler (cron on Mac, Task Scheduler on Windows) will
 run the check quietly on the interval you pick — you'll get a text/email
 if something fires, without ever opening the app. Turn it off the same way.
@@ -155,9 +166,9 @@ complexity — happy to build that if/when you want it.
   dashboard (or on whatever interval you set for background checks). Free
   data occasionally has gaps or a short outage; the app skips whatever it
   can't fetch rather than failing entirely.
-- The signal rules (tucked under "Advanced" in the Watchlist tab) default
-  to: a new 60-day high, on 1.3x average volume, inside an uptrend, with a
-  10-day cooldown so one move doesn't alert you five times.
+- The signal rules (top of the Settings tab) default to: a new 60-day high,
+  on 1.3x average volume, inside an uptrend, with a 10-day cooldown so one
+  move doesn't alert you five times.
 - This has been tested for correctness — logic, error handling, the
   Streamlit UI itself — using synthetic data end-to-end. It has **not**
   been tested for how good the signal actually is; the History tab is what

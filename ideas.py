@@ -52,12 +52,22 @@ THEMES = {
     "Consumer Internet": ["SHOP", "MELI", "SE", "DASH", "UBER", "ABNB", "NFLX", "SPOT"],
 }
 
-# ETF-ish tickers to ignore when Reddit surfaces "new" names
+# ETF/fund/crypto tickers to ignore when Reddit surfaces "new" names
 _NOT_A_COMPANY = {
-    "SPY", "QQQ", "IWM", "DIA", "VOO", "VTI", "TQQQ", "SQQQ", "SOXL", "SOXS",
-    "UVXY", "VXX", "GLD", "SLV", "TLT", "HYG", "ARKK", "SMH", "XLK", "XLE",
-    "BTC", "ETH", "DOGE",
+    "SPY", "QQQ", "IWM", "DIA", "VOO", "VTI", "VT", "VTV", "VUG", "VGT", "VYM",
+    "VXUS", "VXF", "SPMO", "SCHD", "JEPI", "JEPQ", "TQQQ", "SQQQ", "SOXL", "SOXS",
+    "UVXY", "VXX", "GLD", "SLV", "TLT", "HYG", "ARKK", "SMH", "XLK", "XLE", "XLF",
+    "XLV", "IBIT", "FBTC", "GBTC", "ETHA",
+    "BTC", "ETH", "DOGE", "LINK", "XRP", "ADA", "SOL", "HODL",
 }
+
+_FUND_NAME_WORDS = ("etf", "fund", "trust", "shares", "index", "bitcoin", "ethereum")
+
+
+def looks_like_fund(name):
+    """Name-based catch-all for ETFs/funds the ticker blocklist misses."""
+    low = (name or "").lower()
+    return any(w in low for w in _FUND_NAME_WORDS)
 
 APEWISDOM_URL = "https://apewisdom.io/api/v1.0/filter/all-stocks/page/{page}"
 
@@ -90,6 +100,7 @@ def fetch_sentiment(pages=3):
                     "mentions": int(row.get("mentions") or 0),
                     "mentions_24h_ago": int(row.get("mentions_24h_ago") or 0),
                     "rank": int(row.get("rank") or 999),
+                    "rank_24h_ago": int(row.get("rank_24h_ago") or 0) or None,
                     "upvotes": int(row.get("upvotes") or 0),
                     "name": row.get("name") or row["ticker"],
                 }
@@ -291,7 +302,7 @@ def new_on_radar(sentiment, limit=15):
     uni = universe()
     rows = []
     for sym, s in sentiment.items():
-        if sym in uni or sym in _NOT_A_COMPANY or s["rank"] > 100:
+        if sym in uni or sym in _NOT_A_COMPANY or s["rank"] > 100 or looks_like_fund(s["name"]):
             continue
         prev = s["mentions_24h_ago"]
         rows.append({

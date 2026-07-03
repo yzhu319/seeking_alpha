@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import common
+import early as early_engine
 import ideas as idea_engine
 
 st.set_page_config(page_title="Wave Radar", page_icon="🌊", layout="wide")
@@ -70,8 +71,36 @@ except Exception as e:
 # The classic breakout tabs keep operating on *your* watchlist only.
 results = {s: df for s, df in all_results.items() if s in watch_symbols}
 
-tab_radar, tab_themes, tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["🌊 Idea Radar", "🧭 Theme Pulse", "📡 Breakouts", "⏱️ Time Machine", "📋 Watchlist", "🔔 Alerts", "📜 History"]
+
+@st.cache_data(ttl=21600, show_spinner="Early Radar: analyst revisions + SEC filing velocity (slow, ~1 min, cached 6h)…")
+def cached_early_scan(scan_date, settings_tuple, _sentiment, _price_data):
+    """
+    The slow leading-signal pass (yfinance revisions + EDGAR full-text search
+    per shortlisted name). Signals move on a days/weeks scale, so cache 6h;
+    keyed on date + settings, the heavy dicts are passed unhashed.
+    """
+    st_dict = dict(settings_tuple)
+    early_list = early_engine.generate_early(_sentiment, _price_data, st_dict)
+    hot = common.early_needing_alert(early_list, int(st_dict["early_alert_threshold"]))
+    common.log_early(early_list)
+    if hot:
+        common.send_early_alert(hot, st_dict)
+    return early_list, hot
+
+
+early_list, hot_early = [], []
+early_error = None
+if sentiment:
+    try:
+        early_list, hot_early = cached_early_scan(
+            datetime.now().strftime("%Y-%m-%d"), settings_tuple, sentiment, all_results
+        )
+    except Exception as e:
+        early_error = str(e)
+
+tab_radar, tab_early, tab_themes, tab1, tab2, tab3, tab_settings, tab5, tab_about = st.tabs(
+    ["🌊 Idea Radar", "🔮 Early Radar", "🧭 Theme Pulse", "📡 Breakouts", "⏱️ Time Machine", "📋 Watchlist",
+     "⚙️ Settings", "📜 History", "ℹ️ About"]
 )
 
 # ---------------------------------------------------------------------------
@@ -126,6 +155,63 @@ with tab_radar:
         if st.button("🔄 Refresh scan"):
             st.cache_data.clear()
             st.rerun()
+
+# ---------------------------------------------------------------------------
+# Tab — Early Radar (leading signals: catch the wave while it's FORMING)
+# ---------------------------------------------------------------------------
+with tab_early:
+    st.subheader("Before the wave — leading signals only")
+    st.caption(
+        "Wave Radar needs price confirmation, so it's late by design. This tab scores what historically "
+        "*preceded* the EV / AI / memory runs: **Reddit chatter accelerating from a low base** (the few "
+        "hundred smart people, not CNBC), **analysts quietly revising estimates up**, and **the whole "
+        "ecosystem starting to mention the name in SEC filings** ('high bandwidth memory' filings ran "
+        "28 → 99 per quarter before memory stocks finished repricing). An earliness gate damps anything "
+        "that already ran. Earlier means less reliable — expect more false positives here, by design."
+    )
+
+    if early_error:
+        st.error(f"Early scan failed this run: {early_error}")
+    elif not early_list:
+        st.info("No early candidates could be scored yet — the scan may still be warming up.")
+    else:
+        pre_wave = [e for e in early_list if "pre-wave" in e["badge"]]
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Top early candidate", f"{early_list[0]['symbol']} · {early_list[0]['early_score']}/100")
+        c2.metric("In the pre-wave window", f"{len(pre_wave)} of {len(early_list)} shortlisted")
+        c3.metric("Alert threshold", f"≥ {int(settings['early_alert_threshold'])}/100")
+
+        if hot_early:
+            st.success(
+                "🔮 " + ", ".join(f"{e['symbol']} ({e['early_score']})" for e in hot_early)
+                + " — forming-wave signal(s) crossed your threshold today."
+            )
+
+        st.markdown("#### Early candidates, ranked")
+        st.caption(
+            "Early Score = 35% chatter trajectory + 35% analyst revisions + 30% filing velocity, "
+            "× earliness gate. 🌱 = price hasn't voted yet (the whole point of this tab)."
+        )
+        for e in early_list:
+            price_str = f"${e['close']:.2f}" if e["close"] else "—"
+            ret_str = f"{e['ret_3m']:+.0%} 3-mo" if e["ret_3m"] is not None else "no 3-mo data"
+            with st.expander(
+                f"{e['badge'].split()[0]} **{e['symbol']}** — {e['name']}  ·  {e['theme']}  ·  "
+                f"Early {e['early_score']}/100  ·  {price_str} ({ret_str})"
+            ):
+                b1, b2, b3 = st.columns(3)
+                b1.metric("Chatter trajectory", f"{e['chatter']}/100")
+                b2.metric("Analyst revisions", f"{e['revisions']}/100")
+                b3.metric("Filing velocity", f"{e['filings']}/100")
+                st.write(f"**{e['badge']}** — {e['why']}")
+
+        st.info(
+            "📈 **This tab gets smarter the longer it runs.** Every scan snapshots the full Reddit "
+            "mention board into the local database; once ~a week of snapshots exists, chatter scoring "
+            "switches from 24-hour deltas to real multi-day trajectories. Run the background scanner "
+            "daily (Settings tab) to build that history — on the hosted version the history resets "
+            "with each redeploy, so this works best locally."
+        )
 
 # ---------------------------------------------------------------------------
 # Tab — Theme Pulse (is a whole basket moving, or just one stock?)
@@ -309,31 +395,32 @@ with tab3:
         st.success("Saved.")
         st.rerun()
 
-    with st.expander("Advanced: signal rules"):
-        st.caption("Same defaults used everywhere in this app — change only if you know what you're loosening.")
-        c1, c2, c3 = st.columns(3)
-        lookback = c1.number_input("Breakout lookback (days)", 10, 250, int(settings["lookback_high"]))
-        vol_window = c1.number_input("Volume average window (days)", 5, 60, int(settings["vol_window"]))
-        sma_fast = c2.number_input("Fast trend average (days)", 5, 60, int(settings["sma_fast"]))
-        sma_slow = c2.number_input("Slow trend average (days)", 10, 200, int(settings["sma_slow"]))
-        vol_mult = c3.number_input("Volume confirmation multiple", 1.0, 5.0, float(settings["vol_mult"]), step=0.1)
-        cooldown = c3.number_input("Cooldown between fires (days)", 1, 60, int(settings["cooldown"]))
-        if st.button("Save rules"):
-            common.update_settings(
-                {
-                    "lookback_high": lookback, "vol_window": vol_window, "sma_fast": sma_fast,
-                    "sma_slow": sma_slow, "vol_mult": vol_mult, "cooldown": cooldown,
-                }
-            )
-            st.cache_data.clear()
-            st.success("Saved.")
-            st.rerun()
+# ---------------------------------------------------------------------------
+# Tab — Settings (signal rules, alerts, background scheduling — one place)
+# ---------------------------------------------------------------------------
+with tab_settings:
+    st.subheader("Signal rules")
+    st.caption("Same defaults used everywhere in this app — change only if you know what you're loosening.")
+    c1, c2, c3 = st.columns(3)
+    lookback = c1.number_input("Breakout lookback (days)", 10, 250, int(settings["lookback_high"]))
+    vol_window = c1.number_input("Volume average window (days)", 5, 60, int(settings["vol_window"]))
+    sma_fast = c2.number_input("Fast trend average (days)", 5, 60, int(settings["sma_fast"]))
+    sma_slow = c2.number_input("Slow trend average (days)", 10, 200, int(settings["sma_slow"]))
+    vol_mult = c3.number_input("Volume confirmation multiple", 1.0, 5.0, float(settings["vol_mult"]), step=0.1)
+    cooldown = c3.number_input("Cooldown between fires (days)", 1, 60, int(settings["cooldown"]))
+    if st.button("💾 Save signal rules"):
+        common.update_settings(
+            {
+                "lookback_high": lookback, "vol_window": vol_window, "sma_fast": sma_fast,
+                "sma_slow": sma_slow, "vol_mult": vol_mult, "cooldown": cooldown,
+            }
+        )
+        st.cache_data.clear()
+        st.success("Saved.")
+        st.rerun()
 
-# ---------------------------------------------------------------------------
-# Tab 4 — Alerts
-# ---------------------------------------------------------------------------
-with tab4:
-    st.subheader("Get notified")
+    st.divider()
+    st.subheader("Alerts (email / text)")
     st.caption("Credentials are stored locally in ai_infra.db, next to this app — nowhere else, no cloud account needed.")
 
     with st.form("alert_form"):
@@ -343,7 +430,7 @@ with tab4:
         smtp_user = col1.text_input("Your email address", value=settings.get("smtp_user", ""))
         smtp_pass = col2.text_input(
             "App password", value=settings.get("smtp_pass", ""), type="password",
-            help="Not your normal password — see README.md for how to create a Gmail app password.",
+            help="Not your normal password — see the About tab for how to create a Gmail app password.",
         )
         alert_to = st.text_area(
             "Send alerts to (comma-separated)", value=settings.get("alert_to", ""),
@@ -359,7 +446,13 @@ with tab4:
             int(settings.get("idea_alert_threshold", 75)),
             help="Ideas at or above this score trigger an email/text (at most once per name every 5 days).",
         )
-        save_clicked = st.form_submit_button("💾 Save settings")
+        early_threshold = st.slider(
+            "Alert me when an Early Score reaches…", 40, 90,
+            int(settings.get("early_alert_threshold", 60)),
+            help="Early Radar (forming waves, pre-price-confirmation). Lower = earlier but noisier. "
+                 "At most once per name every 7 days.",
+        )
+        save_clicked = st.form_submit_button("💾 Save alert settings")
 
     if save_clicked:
         common.update_settings(
@@ -367,6 +460,7 @@ with tab4:
                 "smtp_host": smtp_host, "smtp_port": smtp_port, "smtp_user": smtp_user,
                 "smtp_pass": smtp_pass, "alert_to": alert_to, "scan_interval_hours": interval,
                 "idea_alert_threshold": idea_threshold,
+                "early_alert_threshold": early_threshold,
             }
         )
         st.success("Saved.")
@@ -395,7 +489,10 @@ with tab4:
 
     st.divider()
     st.subheader("Background checking")
-    st.caption("Runs quietly on your laptop's own scheduler and texts/emails you — no need to keep this tab open.")
+    st.caption(
+        "Runs quietly on your laptop's own scheduler and texts/emails you — no need to keep this tab open. "
+        "Local-laptop feature only: does nothing on the hosted (Streamlit Cloud) version."
+    )
 
     is_on = common.scheduler_status()
     colx, coly = st.columns([3, 1])
@@ -409,19 +506,37 @@ with tab4:
         if coly.button("Turn on"):
             try:
                 common.enable_scheduler(int(settings.get("scan_interval_hours", 2)))
-                st.success("Enabled — see README.md if it doesn't seem to run (macOS sometimes needs a one-time permission grant).")
+                st.success("Enabled — see the About tab if it doesn't seem to run (macOS sometimes needs a one-time permission grant).")
             except Exception as e:
-                st.error(f"Couldn't set this up automatically ({e}). See README.md for the two-line manual version.")
+                st.error(f"Couldn't set this up automatically ({e}). See the About tab for the two-line manual version.")
             st.rerun()
 
 # ---------------------------------------------------------------------------
 # Tab 5 — History
 # ---------------------------------------------------------------------------
 with tab5:
-    st.subheader("Idea history")
-    st.caption("Every day's ranked ideas are logged — this is the scorer's paper trail, and eventually its report card.")
+    st.subheader("Early Radar history")
+    st.caption(
+        "Every day's early candidates, logged before the outcome is known — the honest way to find out "
+        "whether the leading signals actually lead."
+    )
 
     conn = common.get_conn()
+    early_df = pd.read_sql("SELECT * FROM early_log ORDER BY run_date DESC, early_score DESC", conn)
+    if early_df.empty:
+        st.info("No early-radar history yet — it fills in as the radar runs.")
+    else:
+        st.dataframe(
+            early_df[["run_date", "symbol", "theme", "early_score", "chatter", "revisions", "filings", "badge", "close"]]
+            .rename(columns={"run_date": "Date", "symbol": "Ticker", "theme": "Theme", "early_score": "Early",
+                             "chatter": "Chatter", "revisions": "Revisions", "filings": "Filings",
+                             "badge": "Stage", "close": "Close"}),
+            hide_index=True, width="stretch", height=280,
+        )
+
+    st.divider()
+    st.subheader("Idea history")
+    st.caption("Every day's ranked ideas are logged — this is the scorer's paper trail, and eventually its report card.")
     idea_df = pd.read_sql("SELECT * FROM idea_log ORDER BY run_date DESC, wave_score DESC", conn)
     if idea_df.empty:
         st.info("No idea history yet — it fills in as the radar runs.")
@@ -455,6 +570,60 @@ with tab5:
                 ),
                 hide_index=True, width="stretch",
             )
+
+# ---------------------------------------------------------------------------
+# Tab — About (live docs: source, data, where things live — always in sync
+# with the running app, since it reads straight from disk/settings)
+# ---------------------------------------------------------------------------
+with tab_about:
+    st.subheader("About Wave Radar")
+    st.caption("Mechanical, rules-based research tool — not investment advice.")
+
+    c1, c2, c3 = st.columns(3)
+    c1.link_button("🌊 Live app", "https://ai-infra-watch.streamlit.app", width="stretch")
+    c2.link_button("💻 Source code (GitHub)", "https://github.com/yzhu319/seeking_alpha", width="stretch")
+    c3.link_button("📈 Data: Yahoo Finance", "https://finance.yahoo.com", width="stretch")
+
+    st.divider()
+    st.markdown("#### Where your data lives")
+    st.code(common.DB_PATH, language=None)
+    st.markdown(
+        "A single SQLite file, right next to the app — your watchlist, settings, and full signal/idea "
+        "history all live here. Back it up by copying that one file.\n\n"
+        "- **Running locally:** persists forever, across restarts.\n"
+        "- **Hosted version (Streamlit Community Cloud):** the filesystem is ephemeral — this file (and "
+        "any edits made through the UI) resets whenever the app restarts or redeploys. For alerts and "
+        "durable history, run it locally."
+    )
+
+    st.markdown("#### Refresh cadence")
+    st.markdown(
+        "- **While this dashboard is open:** prices, sentiment, and fundamentals are cached for 30 "
+        "minutes, then re-fetched on your next visit or a click of Refresh. It does **not** poll on its "
+        "own in the background just by being deployed.\n"
+        "- **Unattended, e.g. once a day (local only):** turn on **Background checking** in the "
+        "⚙️ Settings tab. Your laptop's own scheduler (cron on Mac/Linux, Task Scheduler on Windows) "
+        "runs `scanner.py` on the interval you pick there, texts/emails you if something crosses your "
+        "threshold, and logs it to History — even with the browser closed.\n"
+        "- The hosted Streamlit Cloud version can't do unattended background checks (no persistent "
+        "process there) — that part only works when you run the app on your own machine."
+    )
+
+    st.markdown("#### Data sources")
+    st.markdown(
+        "- **Prices, volume, fundamentals** — [Yahoo Finance](https://finance.yahoo.com) via the "
+        "`yfinance` library. Free, no account or key, occasionally has short gaps.\n"
+        "- **Reddit crowd sentiment** — [ApeWisdom](https://apewisdom.io) free API, no key needed.\n"
+        "- Everything here is free/unauthenticated, which is also why it isn't real-time."
+    )
+
+    st.markdown("#### Full setup guide")
+    with st.expander("Show README (install, Gmail app passwords, manual cron, troubleshooting)"):
+        try:
+            with open(f"{common.APP_DIR}/README.md") as f:
+                st.markdown(f.read())
+        except FileNotFoundError:
+            st.info("README.md not found next to app.py.")
 
 st.divider()
 st.caption("Mechanical, rules-based research tool — not investment advice. Data via Yahoo Finance, refreshed every 30 minutes.")

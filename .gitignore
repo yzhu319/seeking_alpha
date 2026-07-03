@@ -2,6 +2,11 @@
 ai_infra.db
 scanner.log
 
+# Read Between Lines — fetched filings, AI cache, Gemini key
+read_between_lines/rbl.db
+read_between_lines/rbl.db-journal
+read_between_lines/ticker_cik_cache.json
+
 # Python
 __pycache__/
 *.pyc

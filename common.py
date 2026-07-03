@@ -82,10 +82,11 @@ DEFAULT_SETTINGS = {
     "alert_to": "",
     "scan_interval_hours": 2,
     "idea_alert_threshold": 75,
+    "early_alert_threshold": 60,
 }
 
 INT_KEYS = {"lookback_high", "vol_window", "sma_fast", "sma_slow", "cooldown", "smtp_port", "scan_interval_hours",
-            "idea_alert_threshold"}
+            "idea_alert_threshold", "early_alert_threshold"}
 FLOAT_KEYS = {"vol_mult"}
 
 CARRIER_GATEWAYS = {
@@ -123,6 +124,18 @@ def init_db():
         "close REAL, why TEXT)"
     )
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_idea_day ON idea_log (run_date, symbol)")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS mention_log ("
+        "snap_date TEXT, ticker TEXT, mentions INTEGER, rank INTEGER, upvotes INTEGER, "
+        "PRIMARY KEY (snap_date, ticker))"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS early_log ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, run_date TEXT, symbol TEXT, theme TEXT, "
+        "early_score INTEGER, chatter INTEGER, revisions INTEGER, filings INTEGER, "
+        "ret_3m REAL, badge TEXT, close REAL, why TEXT)"
+    )
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_early_day ON early_log (run_date, symbol)")
     conn.commit()
 
     if conn.execute("SELECT COUNT(*) FROM watchlist").fetchone()[0] == 0:
@@ -331,6 +344,75 @@ def ideas_needing_alert(ideas, threshold, quiet_days=5):
             hot.append(i)
     conn.close()
     return hot
+
+
+def log_early(early_list):
+    """Append today's early-detection candidates to early_log."""
+    if not early_list:
+        return
+    run_date = datetime.now().date().isoformat()
+    conn = get_conn()
+    conn.executemany(
+        "INSERT OR REPLACE INTO early_log "
+        "(run_date, symbol, theme, early_score, chatter, revisions, filings, ret_3m, badge, close, why) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [(run_date, e["symbol"], e["theme"], e["early_score"], e["chatter"], e["revisions"],
+          e["filings"], e["ret_3m"], e["badge"], e["close"], e["why"]) for e in early_list],
+    )
+    conn.commit()
+    conn.close()
+
+
+def early_needing_alert(early_list, threshold, quiet_days=7):
+    """Early candidates at/above threshold not already flagged recently."""
+    conn = get_conn()
+    hot = []
+    for e in early_list:
+        if e["early_score"] < threshold:
+            continue
+        recent = conn.execute(
+            "SELECT COUNT(*) FROM early_log WHERE symbol=? AND early_score>=? "
+            "AND run_date >= date('now', ?)",
+            (e["symbol"], threshold, f"-{quiet_days} days"),
+        ).fetchone()[0]
+        if recent == 0:
+            hot.append(e)
+    conn.close()
+    return hot
+
+
+def send_early_alert(hot_early, settings):
+    """Email/text for early-detection candidates crossing the threshold."""
+    host, user, password = settings.get("smtp_host"), settings.get("smtp_user"), settings.get("smtp_pass")
+    port = int(settings.get("smtp_port", 587) or 587)
+    recipients = [r.strip() for r in str(settings.get("alert_to", "")).split(",") if r.strip()]
+    if not all([host, user, password]) or not recipients:
+        return False, "Email isn't configured yet — fill in the Settings tab first."
+
+    lines = [
+        f"{e['symbol']} ({e['theme']}) — Early Score {e['early_score']}/100, {e['badge']}\n    {e['why']}"
+        for e in hot_early
+    ]
+    body = (
+        "Early Radar — possible wave FORMING (before price confirmation):\n\n"
+        + "\n\n".join(lines)
+        + "\n\nScore = Reddit chatter trajectory + analyst up-revisions + SEC-filing ecosystem velocity."
+        + "\nThese are earlier and therefore LESS reliable than Wave Radar signals."
+        + "\nMechanical screen only — not investment advice, do your own research.\n"
+    )
+    msg = EmailMessage()
+    msg["Subject"] = f"Early Radar: {len(hot_early)} forming signal(s)"
+    msg["From"] = user
+    msg["To"] = ", ".join(recipients)
+    msg.set_content(body)
+    try:
+        with smtplib.SMTP(host, port, timeout=20) as server:
+            server.starttls()
+            server.login(user, password)
+            server.send_message(msg)
+        return True, f"Sent to {len(recipients)} recipient(s)."
+    except Exception as e:
+        return False, f"Couldn't send: {e}"
 
 
 def send_idea_alert(hot_ideas, settings):

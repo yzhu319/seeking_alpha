@@ -75,10 +75,21 @@ To stop it: close the terminal/command window that opened alongside it.
 
 ## 3. Using it
 
-Eight tabs, left to right:
+Nine tabs, left to right:
 
 - **Idea Radar** — the headline. Ranked ideas with the full "why" behind
   each score, plus Reddit-hot names outside the universe.
+- **Early Radar** — the predictive layer: catch the wave while it's
+  *forming*, before price confirmation. Scores the three signals that
+  historically preceded the EV/AI/memory runs: Reddit chatter accelerating
+  from a low base (sustained multi-day growth, not one-day news pops),
+  analysts quietly revising estimates up (Yahoo Finance), and the whole
+  ecosystem starting to mention the name in SEC operational filings
+  (EDGAR full-text search — "high bandwidth memory" filings ran 28 → 99
+  per quarter before memory stocks finished repricing). An earliness gate
+  damps names that already ran. Earlier = noisier, by design. Gets sharper
+  the longer the background scanner runs, as daily Reddit-mention
+  snapshots accumulate into real trajectories.
 - **Theme Pulse** — is a whole basket moving, or just one stock? Breadth
   is what separates a real wave from a meme squeeze.
 - **Breakouts** — what fired today on your personal watchlist, at a glance.

@@ -1,9 +1,19 @@
 # AI Infra Watch
 
-A private dashboard, just for you, that watches a basket of AI-infrastructure
-stocks (chips, memory, cooling, networking, power) for breakouts — and can
-text or email you when one happens. Everything runs on this laptop. Nothing
-is uploaded anywhere, no account required, no cloud bill.
+**Live app: https://ai-infra-watch.streamlit.app** (deployed from this repo
+via Streamlit Community Cloud — redeploys automatically on every push to
+`main`).
+
+A dashboard that watches a basket of AI-infrastructure stocks (chips,
+memory, cooling, networking, power) for breakouts — and, when run locally,
+can text or email you when one happens.
+
+Note on the hosted version: Streamlit Community Cloud containers have an
+ephemeral filesystem, so watchlist edits, settings, and signal history reset
+whenever the app restarts or redeploys. The "background checking" toggle in
+the Alerts tab is a local-laptop feature (it uses cron / Task Scheduler) and
+won't do anything in the cloud. For alerts and persistent history, run it
+locally as described below.
 
 **Not investment advice.** A transparent, rules-based screen — useful as one
 input, not a substitute for your own judgment.

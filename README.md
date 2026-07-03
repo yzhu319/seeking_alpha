@@ -1,12 +1,29 @@
-# AI Infra Watch
+# Wave Radar
 
 **Live app: https://ai-infra-watch.streamlit.app** (deployed from this repo
 via Streamlit Community Cloud — redeploys automatically on every push to
 `main`).
 
-A dashboard that watches a basket of AI-infrastructure stocks (chips,
-memory, cooling, networking, power) for breakouts — and, when run locally,
-can text or email you when one happens.
+A general-purpose investment-idea radar, built to catch the big waves —
+the Tesla/EV run, the Nvidia/ChatGPT run, the AI-infra/memory boom — while
+they're forming, instead of reading about them afterwards. First-principles
+model: every one of those waves showed the same three ingredients at once,
+each observable from free public data:
+
+1. **Price wave** — the stock already outperforming, breaking out on volume
+   (Yahoo Finance).
+2. **Crowd ignition** — retail chatter accelerating on Reddit
+   (ApeWisdom API, no key needed).
+3. **Fundamental thrust** — revenue/earnings actually inflecting, so it's a
+   business wave, not just a story (public company financials).
+
+Each ingredient is scored 0–100 by transparent rules and blended into one
+**Wave Score** (40% price / 25% crowd / 35% fundamentals) across a ~100-name
+universe of thematic baskets (AI infra, AI software, nuclear, EV, robotics,
+crypto rails, GLP-1, space, quantum, cybersecurity, …). A "New on the
+radar" list surfaces Reddit-hot names *outside* the universe — where the
+next theme tends to show up first. When a score crosses your threshold, it
+can text or email you (when running locally).
 
 Note on the hosted version: Streamlit Community Cloud containers have an
 ephemeral filesystem, so watchlist edits, settings, and signal history reset
@@ -51,9 +68,13 @@ To stop it: close the terminal/command window that opened alongside it.
 
 ## 3. Using it
 
-Five tabs, left to right:
+Seven tabs, left to right:
 
-- **Market Pulse** — the headline. What fired today, at a glance.
+- **Idea Radar** — the headline. Ranked ideas with the full "why" behind
+  each score, plus Reddit-hot names outside the universe.
+- **Theme Pulse** — is a whole basket moving, or just one stock? Breadth
+  is what separates a real wave from a meme squeeze.
+- **Breakouts** — what fired today on your personal watchlist, at a glance.
 - **Time Machine** — drag the slider to any past date and see what the
   rules would have flagged then, with no hindsight. "Jump to first
   breakout" finds whatever the rules actually caught first.

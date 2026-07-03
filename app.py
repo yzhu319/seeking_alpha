@@ -1,5 +1,5 @@
 """
-app.py — AI Infra Watch, the dashboard.
+app.py — Wave Radar, the dashboard.
 
 Run this with:  streamlit run app.py
 (or just double-click start_mac.command / start_windows.bat)
@@ -12,47 +12,154 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import common
+import ideas as idea_engine
 
-st.set_page_config(page_title="AI Infra Watch", page_icon="📡", layout="wide")
+st.set_page_config(page_title="Wave Radar", page_icon="🌊", layout="wide")
 common.init_db()
 
-st.title("📡 AI Infra Watch")
+st.title("🌊 Wave Radar")
 st.caption(
-    "A mechanical breakout screen across compute, memory, storage, cooling, networking, and power — "
-    "not investment advice, just a transparent, rules-based lens on the sector."
+    "Hunts for the big waves — price momentum + Reddit crowd ignition + fundamental thrust, "
+    "scored mechanically across a universe of thematic baskets. "
+    "Not investment advice: a transparent, rules-based screen to make sure you at least *see* the wave."
 )
 
 watchlist = common.get_watchlist(enabled_only=True)
 settings = common.get_settings()
 
+uni_map = idea_engine.universe()
+all_symbols = tuple(sorted(set(uni_map) | {w["symbol"] for w in watchlist}))
+watch_symbols = {w["symbol"] for w in watchlist}
 
-@st.cache_data(ttl=1800, show_spinner="Checking the market…")
-def cached_analyze(watchlist_tuple, settings_tuple):
-    wl = [dict(zip(["symbol", "name", "sector", "enabled"], w)) for w in watchlist_tuple]
+
+@st.cache_data(ttl=1800, show_spinner="Scanning the whole universe — prices, Reddit, fundamentals…")
+def cached_wave_scan(symbols_tuple, watchlist_tuple, settings_tuple):
+    """
+    One shared scan per refresh window: breakout signals for every symbol,
+    ranked ideas, and all logging/alerting side effects (kept in here so they
+    run once per scan, not on every widget interaction).
+    """
     st_dict = dict(settings_tuple)
-    results = common.analyze_watchlist(wl, st_dict)
-    if results:
-        common.log_results(results, wl)
-    return results
+    wl = [dict(zip(["symbol", "name", "sector", "enabled"], w)) for w in watchlist_tuple]
+    results = common.analyze_watchlist([{"symbol": s} for s in symbols_tuple], st_dict)
+    sentiment = idea_engine.fetch_sentiment()
+    idea_list, _ = idea_engine.generate_ideas(results, results, st_dict, sentiment)
+
+    watch_results = {s: df for s, df in results.items() if s in {w["symbol"] for w in wl}}
+    if watch_results:
+        common.log_results(watch_results, wl)
+
+    # Find not-yet-flagged hot ideas BEFORE logging today's scores, then alert.
+    hot = common.ideas_needing_alert(idea_list, int(st_dict["idea_alert_threshold"]))
+    common.log_ideas(idea_list)
+    if hot:
+        common.send_idea_alert(hot, st_dict)
+    return results, idea_list, sentiment, hot
 
 
-wl_tuple = tuple((w["symbol"], w["name"], w["sector"], w["enabled"]) for w in watchlist)
 settings_tuple = tuple(sorted(settings.items()))
+wl_tuple = tuple((w["symbol"], w["name"], w["sector"], w["enabled"]) for w in watchlist)
 
-results = {}
+all_results, idea_list, sentiment, hot_ideas = {}, [], {}, []
 fetch_error = None
-if watchlist:
-    try:
-        results = cached_analyze(wl_tuple, settings_tuple)
-    except Exception as e:
-        fetch_error = str(e)
+try:
+    all_results, idea_list, sentiment, hot_ideas = cached_wave_scan(all_symbols, wl_tuple, settings_tuple)
+except Exception as e:
+    fetch_error = str(e)
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["📡 Market Pulse", "⏱️ Time Machine", "📋 Watchlist", "🔔 Alerts", "📜 History"]
+# The classic breakout tabs keep operating on *your* watchlist only.
+results = {s: df for s, df in all_results.items() if s in watch_symbols}
+
+tab_radar, tab_themes, tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["🌊 Idea Radar", "🧭 Theme Pulse", "📡 Breakouts", "⏱️ Time Machine", "📋 Watchlist", "🔔 Alerts", "📜 History"]
 )
 
 # ---------------------------------------------------------------------------
-# Tab 1 — Market Pulse
+# Tab — Idea Radar (the headline: ranked, explained ideas)
+# ---------------------------------------------------------------------------
+with tab_radar:
+    if fetch_error:
+        st.error(f"Couldn't reach the market data provider right now: {fetch_error}")
+    elif not idea_list:
+        st.warning("No ideas could be scored yet — data may still be warming up. Try Refresh.")
+    else:
+        top = idea_list[0]
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Strongest wave right now", f"{top['symbol']} · {top['wave_score']}/100")
+        c2.metric("Universe scanned", f"{len(all_results)} names, {len(idea_engine.THEMES)} themes")
+        c3.metric("Alert threshold", f"≥ {int(settings['idea_alert_threshold'])}/100")
+
+        if hot_ideas:
+            st.success(
+                "🔥 " + ", ".join(f"{i['symbol']} ({i['wave_score']})" for i in hot_ideas)
+                + " crossed your alert threshold today."
+            )
+
+        st.markdown("#### Ranked ideas")
+        st.caption(
+            "Wave Score = 40% price wave + 25% crowd ignition + 35% fundamental thrust. "
+            "Expand a row for the full 'why'. The score detects forming waves — it does not predict."
+        )
+        for i in idea_list[:15]:
+            heat = "🔥" if i["wave_score"] >= int(settings["idea_alert_threshold"]) else ("🌊" if i["wave_score"] >= 55 else "·")
+            with st.expander(
+                f"{heat} **{i['symbol']}** — {i['name']}  ·  {i['theme']}  ·  "
+                f"Wave {i['wave_score']}/100  ·  ${i['close']:.2f}"
+            ):
+                b1, b2, b3 = st.columns(3)
+                b1.metric("Price wave", f"{i['momentum']}/100")
+                b2.metric("Crowd ignition", f"{i['sentiment']}/100")
+                b3.metric("Fundamental thrust", f"{i['fundamentals']}/100")
+                st.write(i["why"])
+
+        st.markdown("#### 👀 New on the radar (outside the universe)")
+        st.caption(
+            "Reddit-hot names not in any theme basket — where the *next* theme tends to show up first. "
+            "Add promising ones to your watchlist."
+        )
+        radar_df = idea_engine.new_on_radar(sentiment)
+        if radar_df.empty:
+            st.info("Nothing unusual trending outside the universe right now.")
+        else:
+            st.dataframe(radar_df, hide_index=True, width="stretch")
+
+        if st.button("🔄 Refresh scan"):
+            st.cache_data.clear()
+            st.rerun()
+
+# ---------------------------------------------------------------------------
+# Tab — Theme Pulse (is a whole basket moving, or just one stock?)
+# ---------------------------------------------------------------------------
+with tab_themes:
+    st.subheader("Theme-level waves")
+    st.caption(
+        "A real wave lifts a whole basket, not one ticker — breadth is what separated the AI-infra boom "
+        "from a meme squeeze. Sorted by median 3-month basket return."
+    )
+    if not all_results:
+        st.info("No data yet.")
+    else:
+        pulse = idea_engine.theme_pulse(all_results, sentiment)
+        if pulse.empty:
+            st.info("No data yet.")
+        else:
+            st.dataframe(
+                pulse,
+                hide_index=True, width="stretch",
+                column_config={
+                    "Median 3-mo return": st.column_config.NumberColumn(format="percent"),
+                    "Breadth above 200-day": st.column_config.ProgressColumn(min_value=0, max_value=1),
+                },
+            )
+            best = pulse.iloc[0]
+            st.metric(
+                "Hottest theme",
+                best["Theme"],
+                f"{best['Median 3-mo return']:+.0%} median 3-mo, {best['Breadth above 200-day']:.0%} of names in uptrend",
+            )
+
+# ---------------------------------------------------------------------------
+# Tab 1 — Breakouts (your watchlist)
 # ---------------------------------------------------------------------------
 with tab1:
     if not watchlist:
@@ -247,6 +354,11 @@ with tab4:
             value=int(settings.get("scan_interval_hours", 2)) if int(settings.get("scan_interval_hours", 2)) in [1, 2, 4, 6, 12] else 2,
             format_func=lambda h: f"{h} hour(s)",
         )
+        idea_threshold = st.slider(
+            "Alert me when a Wave Score reaches…", 50, 95,
+            int(settings.get("idea_alert_threshold", 75)),
+            help="Ideas at or above this score trigger an email/text (at most once per name every 5 days).",
+        )
         save_clicked = st.form_submit_button("💾 Save settings")
 
     if save_clicked:
@@ -254,6 +366,7 @@ with tab4:
             {
                 "smtp_host": smtp_host, "smtp_port": smtp_port, "smtp_user": smtp_user,
                 "smtp_pass": smtp_pass, "alert_to": alert_to, "scan_interval_hours": interval,
+                "idea_alert_threshold": idea_threshold,
             }
         )
         st.success("Saved.")
@@ -305,10 +418,26 @@ with tab4:
 # Tab 5 — History
 # ---------------------------------------------------------------------------
 with tab5:
-    st.subheader("Signal history")
-    st.caption("Every check — from this dashboard or the background scanner — adds to this log. This is what eventually tells you whether the rules are any good.")
+    st.subheader("Idea history")
+    st.caption("Every day's ranked ideas are logged — this is the scorer's paper trail, and eventually its report card.")
 
     conn = common.get_conn()
+    idea_df = pd.read_sql("SELECT * FROM idea_log ORDER BY run_date DESC, wave_score DESC", conn)
+    if idea_df.empty:
+        st.info("No idea history yet — it fills in as the radar runs.")
+    else:
+        st.dataframe(
+            idea_df[["run_date", "symbol", "theme", "wave_score", "momentum", "sentiment", "fundamentals", "close"]]
+            .rename(columns={"run_date": "Date", "symbol": "Ticker", "theme": "Theme", "wave_score": "Wave",
+                             "momentum": "Price", "sentiment": "Crowd", "fundamentals": "Fundamentals",
+                             "close": "Close"}),
+            hide_index=True, width="stretch", height=300,
+        )
+
+    st.divider()
+    st.subheader("Breakout signal history")
+    st.caption("Every check — from this dashboard or the background scanner — adds to this log. This is what eventually tells you whether the rules are any good.")
+
     log_df = pd.read_sql("SELECT * FROM signal_log ORDER BY run_date DESC", conn)
     conn.close()
 

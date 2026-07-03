@@ -81,9 +81,11 @@ DEFAULT_SETTINGS = {
     "smtp_pass": "",
     "alert_to": "",
     "scan_interval_hours": 2,
+    "idea_alert_threshold": 75,
 }
 
-INT_KEYS = {"lookback_high", "vol_window", "sma_fast", "sma_slow", "cooldown", "smtp_port", "scan_interval_hours"}
+INT_KEYS = {"lookback_high", "vol_window", "sma_fast", "sma_slow", "cooldown", "smtp_port", "scan_interval_hours",
+            "idea_alert_threshold"}
 FLOAT_KEYS = {"vol_mult"}
 
 CARRIER_GATEWAYS = {
@@ -114,6 +116,13 @@ def init_db():
         "id INTEGER PRIMARY KEY AUTOINCREMENT, run_date TEXT, symbol TEXT, sector TEXT, "
         "price_date TEXT, close REAL, fired INTEGER)"
     )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS idea_log ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, run_date TEXT, symbol TEXT, theme TEXT, "
+        "wave_score INTEGER, momentum INTEGER, sentiment INTEGER, fundamentals INTEGER, "
+        "close REAL, why TEXT)"
+    )
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_idea_day ON idea_log (run_date, symbol)")
     conn.commit()
 
     if conn.execute("SELECT COUNT(*) FROM watchlist").fetchone()[0] == 0:
@@ -287,6 +296,74 @@ def log_results(results, watchlist):
     )
     conn.commit()
     conn.close()
+
+
+def log_ideas(ideas):
+    """Append today's ranked ideas to idea_log (the scorer's paper trail)."""
+    if not ideas:
+        return
+    run_date = datetime.now().date().isoformat()
+    conn = get_conn()
+    conn.executemany(
+        "INSERT OR REPLACE INTO idea_log "
+        "(run_date, symbol, theme, wave_score, momentum, sentiment, fundamentals, close, why) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [(run_date, i["symbol"], i["theme"], i["wave_score"], i["momentum"], i["sentiment"],
+          i["fundamentals"], i["close"], i["why"]) for i in ideas],
+    )
+    conn.commit()
+    conn.close()
+
+
+def ideas_needing_alert(ideas, threshold, quiet_days=5):
+    """Ideas at/above threshold that haven't already been alerted recently."""
+    conn = get_conn()
+    hot = []
+    for i in ideas:
+        if i["wave_score"] < threshold:
+            continue
+        recent = conn.execute(
+            "SELECT COUNT(*) FROM idea_log WHERE symbol=? AND wave_score>=? "
+            "AND run_date >= date('now', ?)",
+            (i["symbol"], threshold, f"-{quiet_days} days"),
+        ).fetchone()[0]
+        if recent == 0:
+            hot.append(i)
+    conn.close()
+    return hot
+
+
+def send_idea_alert(hot_ideas, settings):
+    """Email/text for wave-score ideas crossing the alert threshold."""
+    host, user, password = settings.get("smtp_host"), settings.get("smtp_user"), settings.get("smtp_pass")
+    port = int(settings.get("smtp_port", 587) or 587)
+    recipients = [r.strip() for r in str(settings.get("alert_to", "")).split(",") if r.strip()]
+    if not all([host, user, password]) or not recipients:
+        return False, "Email isn't configured yet — fill in the Alerts tab first."
+
+    lines = [
+        f"{i['symbol']} ({i['theme']}) — Wave Score {i['wave_score']}/100 at ${i['close']:.2f}\n    {i['why']}"
+        for i in hot_ideas
+    ]
+    body = (
+        "Wave Radar — strong signal(s) crossed your alert threshold:\n\n"
+        + "\n\n".join(lines)
+        + "\n\nScore = price wave + Reddit crowd ignition + fundamental thrust."
+        + "\nMechanical screen only — not investment advice, do your own research.\n"
+    )
+    msg = EmailMessage()
+    msg["Subject"] = f"Wave Radar: {len(hot_ideas)} strong signal(s)"
+    msg["From"] = user
+    msg["To"] = ", ".join(recipients)
+    msg.set_content(body)
+    try:
+        with smtplib.SMTP(host, port, timeout=20) as server:
+            server.starttls()
+            server.login(user, password)
+            server.send_message(msg)
+        return True, f"Sent to {len(recipients)} recipient(s)."
+    except Exception as e:
+        return False, f"Couldn't send: {e}"
 
 
 # ---------------------------------------------------------------------------

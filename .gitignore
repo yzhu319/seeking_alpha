@@ -1,0 +1,12 @@
+# Local data — watchlist, settings, signal history (contains SMTP credentials)
+ai_infra.db
+scanner.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS / editor
+.DS_Store
+.claude/

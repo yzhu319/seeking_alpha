@@ -522,7 +522,10 @@ with tab5:
     )
 
     conn = common.get_conn()
-    early_df = pd.read_sql("SELECT * FROM early_log ORDER BY run_date DESC, early_score DESC", conn)
+    try:
+        early_df = pd.read_sql("SELECT * FROM early_log ORDER BY run_date DESC, early_score DESC", conn)
+    except Exception:
+        early_df = pd.DataFrame()
     if early_df.empty:
         st.info("No early-radar history yet — it fills in as the radar runs.")
     else:

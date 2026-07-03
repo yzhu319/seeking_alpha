@@ -54,6 +54,26 @@ _NAME_NOISE = re.compile(
 # Mention history — a daily snapshot of the whole ApeWisdom board, so the
 # trajectory math gets better every day the scanner runs.
 # ---------------------------------------------------------------------------
+def _ensure_tables():
+    """Create this module's tables directly — survives partial hot-reloads
+    (e.g. Streamlit Cloud reloading app.py but keeping an older common.py)."""
+    conn = common.get_conn()
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS mention_log ("
+        "snap_date TEXT, ticker TEXT, mentions INTEGER, rank INTEGER, upvotes INTEGER, "
+        "PRIMARY KEY (snap_date, ticker))"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS early_log ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, run_date TEXT, symbol TEXT, theme TEXT, "
+        "early_score INTEGER, chatter INTEGER, revisions INTEGER, filings INTEGER, "
+        "ret_3m REAL, badge TEXT, close REAL, why TEXT)"
+    )
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_early_day ON early_log (run_date, symbol)")
+    conn.commit()
+    conn.close()
+
+
 def snapshot_mentions(sentiment):
     if not sentiment:
         return
@@ -281,6 +301,7 @@ def generate_early(sentiment, price_data, settings):
     price_data: {sym: df} — used only for the earliness gate; symbols missing
     from it get fetched in one small batch.
     """
+    _ensure_tables()
     snapshot_mentions(sentiment)  # today's brick in the trajectory wall
     hist = mention_history()
     uni = idea_engine.universe()
